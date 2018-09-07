@@ -15,6 +15,6 @@ Forked from Vario by D.Felix (https://codebender.cc/sketch:34645#Vario.ino)
  + piezo buzzer
  + Lipo Battery
  + Optional : USB LiPo battery charger
-![Schema](SimpleBTVario_bb.png#1)
+![Schema](SimpleBTVario_bb.png#3)
 
 ## :information_source: Compatibility with ARM Cortex M0 in progess
