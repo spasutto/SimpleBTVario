@@ -10,6 +10,7 @@ Forked from Vario by D.Felix (https://codebender.cc/sketch:34645#Vario.ino)
 
 ## Schematic / BOM
  + Arduino Pro Mini 3V
+ + MS5611
  + HC-06/05 (not needed if used a simple audio vario)
  + switch
  + piezo buzzer
