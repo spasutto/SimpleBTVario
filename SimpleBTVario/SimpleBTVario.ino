@@ -166,51 +166,48 @@ long readVcc()                         // function to read battery value - still
 bool awakening = true;
 void goToSleep()
 {
-   byte adcsra, mcucr1, mcucr2;
-   delay(250);
-   makePinsInput();
-   sleep_enable();
-   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-   EIMSK = _BV(INT0);             //enable INT0
-   adcsra = ADCSRA;               //save the ADC Control and Status Register A
-   ADCSRA = 0;                    //disable ADC
-   cli();
-   mcucr1 = MCUCR | _BV(BODS) | _BV(BODSE);  //turn off the brown-out detector
-   mcucr2 = mcucr1 & ~_BV(BODSE);
-   MCUCR = mcucr1;                //timed sequence
-   MCUCR = mcucr2;                //BODS stays active for 3 cycles, sleep instruction must be executed while it's active
-   sei();                         //ensure interrupts enabled so we can wake up again
-   sleep_cpu();                   //go to sleep
-   sleep_disable();               //wake up here
-   ADCSRA = adcsra;               //restore ADCSRA
-   makePinsInput();
+  byte adcsra, mcucr1, mcucr2;
+  delay(250);
+  makePinsInput();
+  sleep_enable();
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  EIMSK = _BV(INT0);             //enable INT0
+  adcsra = ADCSRA;               //save the ADC Control and Status Register A
+  ADCSRA = 0;                    //disable ADC
+  cli();
+  mcucr1 = MCUCR | _BV(BODS) | _BV(BODSE);  //turn off the brown-out detector
+  mcucr2 = mcucr1 & ~_BV(BODSE);
+  MCUCR = mcucr1;                //timed sequence
+  MCUCR = mcucr2;                //BODS stays active for 3 cycles, sleep instruction must be executed while it's active
+  sei();                         //ensure interrupts enabled so we can wake up again
+  sleep_cpu();                   //go to sleep
+  sleep_disable();               //wake up here
+  ADCSRA = adcsra;               //restore ADCSRA
+  makePinsInput();
+  play_welcome_beep();
 }
 
 ISR(INT0_vect)
 {
-   EIMSK = 0;                     //disable interrupts (only need one to wake up)
-   awakening = true;
+  EIMSK = 0;                     //disable interrupts (only need one to wake up)
+  awakening = true;
 }
 
 //make all pins input pins with pullup resistors to minimize power consumption
 void makePinsInput(void)
 {
-   for (byte i=0; i<20; i++) {
-       pinMode(i, INPUT_PULLUP);  
-   }
+  for (byte i=0; i<20; i++) {
+    pinMode(i, INPUT_PULLUP);  
+  }
 //#ifdef BLINK_LED   // if the led isn't removed from the pcb, it is lit but dimmed by the internal pull up resistor
-   pinMode(LED_BUILTIN, OUTPUT);          //except the LED pin
-   digitalWrite(LED_BUILTIN, LOW);
+  pinMode(LED_BUILTIN, OUTPUT);          //except the LED pin
+  digitalWrite(LED_BUILTIN, LOW);
 //#endif
 }
 #endif // !defined(ARDUINO_SAMD_ZERO)
 
 void setup()                // setup() function to setup all necessary parameters before we go to endless loop() function
 {
-#ifdef BLINK_LED
-  pinMode(LED_BUILTIN, OUTPUT);
-#endif
-
 #if !defined(ARDUINO_SAMD_ZERO)
   makePinsInput();
   EICRA = 0x00;                  //configure INT0 to trigger on low level
@@ -219,8 +216,14 @@ void setup()                // setup() function to setup all necessary parameter
   Wire.begin();             // lets init i2c protocol
   while(!ms5611.begin())
   {
-    Serial.println("Could not find a valid MS5611 sensor, check wiring!");
-    delay(500);
+    //Serial.println("Could not find a valid MS5611 sensor, check wiring!");
+    for (int i=0; i<10; i++)
+    {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(150);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(150);
+    }
   }
   //bmp085.init(MODE_ULTRA_HIGHRES, p0, false);
   // BMP085 ultra-high-res mode, 101325Pa = 1013.25hPa, false = using Pa units
@@ -288,7 +291,7 @@ void loop(void)
   {
     Temperature = ms5611.readTemperature(); // get temperature in celsius from time to time, we have to divide that by 10 to get XY.Z
     my_temperature = Temperature;
-    Battery_Vcc = min(1100, (readVcc() / 42) + 1000); // get voltage and prepare in percentage
+    Battery_Vcc = min(1100, ((readVcc() - 3600) / 6) + 1000); // get voltage and prepare in percentage (3.6V => 0%, 4.2V => 100%)
     get_time2 = millis() + PERIOD_BAT;
 #ifdef BLINK_LED
     // blink the led
