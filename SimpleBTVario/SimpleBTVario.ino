@@ -77,7 +77,8 @@ float vario_sink_rate_start = -1.1;    //maximum sink beeping value (ex. start s
 //#define BLINK_LED                      //if we blink led at battery reading
 #define PERIOD_NMEA  333               //period for sending LK8000 sentences
 #define PERIOD_BAT  1000               //period for checking battery level
-#define VBATPIN A7
+#define VBATPIN A7                     //M0 VBat reading pin
+#define LXNAV_SENTENCES                //comment to send LK8000 sentences
 /////////////////////////////////////////
 /////////////////////////////////////////
 //BMP085   bmp085 = BMP085();            //set up bmp085 sensor
@@ -103,6 +104,14 @@ float    alt[51];
 float    tim[51];
 float    beep;
 float    Beep_period;
+long average_pressure;
+float tempo;
+float vario;
+float N1;
+float N2;
+float N3;
+float D1;
+float D2;
 static long k[SAMPLES_ARR];
 int buttonState = LOW, lastButtonState = LOW;         // variable for reading the pushbutton status
 unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
@@ -125,17 +134,20 @@ static long Averaging_Filter(long input) // moving average filter function
   return ( sum / SAMPLES_ARR ) ;
 }
 
-void play_welcome_beep()                 //play only once welcome beep after turning on arduino vario
+void play_melody(bool intro = true)                 //play only once welcome beep after turning on arduino vario
 {
-  for (int aa = 300; aa <= 1500; aa = aa + 100)
+  if (intro)
   {
-    tone(speaker_pin, aa, 200);            // play beep on pin 8 (note,duration)
-    delay(100);
+    for (int aa = 300; aa <= 1500; aa = aa + 100)
+    {
+      tone(speaker_pin, aa, 20);            // play beep on pin 8 (note,duration)
+      delay(10);
+    }
   }
   for (int aa = 1500; aa >= 100; aa = aa - 100)
   {
-    tone(speaker_pin, aa, 200);            // play beep on pin 8 (note,duration)
-    delay(100);
+    tone(speaker_pin, aa, 20);            // play beep on pin 8 (note,duration)
+    delay(10);
   }
 }
 
@@ -167,6 +179,7 @@ bool awakening = true;
 void goToSleep()
 {
   byte adcsra, mcucr1, mcucr2;
+  play_melody(false);
   delay(250);
   makePinsInput();
   sleep_enable();
@@ -184,7 +197,7 @@ void goToSleep()
   sleep_disable();               //wake up here
   ADCSRA = adcsra;               //restore ADCSRA
   makePinsInput();
-  play_welcome_beep();
+  play_melody(true);
 }
 
 ISR(INT0_vect)
@@ -229,21 +242,21 @@ void setup()                // setup() function to setup all necessary parameter
   // BMP085 ultra-high-res mode, 101325Pa = 1013.25hPa, false = using Pa units
   // this initialization is useful for normalizing pressure to specific datum.
   // OR setting current local hPa information from a weather station/local airport (QNH).
-  play_welcome_beep();      //everything is ready, play "welcome" sound
+  play_melody();      //everything is ready, play "welcome" sound
 }
 
 void loop(void)
 {
-  float tempo = millis();
-  float vario = 0;
-  float N1 = 0;
-  float N2 = 0;
-  float N3 = 0;
-  float D1 = 0;
-  float D2 = 0;
+  tempo = millis();
+  vario = 0;
+  N1 = 0;
+  N2 = 0;
+  N3 = 0;
+  D1 = 0;
+  D2 = 0;
   //bmp085.calcTruePressure(&Pressure);                                   //get one sample from BMP085 in every loop
   Pressure = ms5611.readPressure();
-  long average_pressure = Averaging_Filter(Pressure);                   //put it in filter and take average
+  average_pressure = Averaging_Filter(Pressure);                   //put it in filter and take average
   Altitude = (float)44330 * (1 - pow(((float)Pressure / p0), 0.190295)); //take new altitude in meters
   //Serial.println(Battery_Vcc);
   for(int cc = 1; cc <= maxsamples; cc++)                              //samples averaging and vario algorithm
@@ -302,17 +315,31 @@ void loop(void)
 
   if (millis() >= get_time3)     //every 1/3 second send NMEA output over serial port
   {
-    String str_out =                                                                 //combine all values and create part of NMEA data string output
-        String("LK8EX1" + String(",") + String(average_pressure, DEC) + String(",") + String(dtostrf(Altitude, 0, 0, altitude_arr)) + String(",") +
+    String str_out = 
+#ifdef LXNAV_SENTENCES
+    //creating now NMEA serial output for LXNAV. LXWP0 sentence format:
+    //$LXWP0,logger_stored, airspeed, airaltitude,v1[0],v1[1],v1[2],v1[3],v1[4],v1[5], hdg, windspeed*CS<CR><LF>
+    // 0 loger_stored : [Y|N] (not used in LX1600)
+    // 1 IAS [km/h] ----> Condor uses TAS!
+    // 2 baroaltitude [m]
+    // 3-8 vario values [m/s] (last 6 measurements in last second)
+    // 9 heading of plane (not used in LX1600)
+    // 10 windcourse [deg] (not used in LX1600)
+    // 11 windspeed [km/h] (not used in LX1600)
+    // $LXWP0,Y,222.3,1665.5,1.71,,,,,,239,174,10.1
+    String("LXWP0" + String(",Y,,") + String(dtostrf(Altitude, 0, 0, altitude_arr)) + String(",") + String(dtostrf((vario), 0, 3, vario_arr)) + String(",,,,,,,,"));
+#else
+    //creating now NMEA serial output for LK8000. LK8EX1 protocol format:
+    //$LK8EX1,pressure,altitude,vario,temperature,battery,*checksum
+	  String("LK8EX1" + String(",") + String(average_pressure, DEC) + String(",") + String(dtostrf(Altitude, 0, 0, altitude_arr)) + String(",") +
                String(dtostrf((vario * 100), 0, 0, vario_arr)) + String(",") + String(my_temperature, DEC) + String(",") + String(Battery_Vcc, DEC) + String(","));
+#endif
     unsigned int checksum_end, ai, bi;                                               // Calculating checksum for data string
     for (checksum_end = 0, ai = 0; ai < str_out.length(); ai++)
     {
       bi = (unsigned char)str_out[ai];
       checksum_end ^= bi;
     }
-    //creating now NMEA serial output for LK8000. LK8EX1 protocol format:
-    //$LK8EX1,pressure,altitude,vario,temperature,battery,*checksum
     Serial.print("$");                     //print first sign of NMEA protocol
     Serial.print(str_out);                 // print data string
     Serial.print("*");                     //end of protocol string
