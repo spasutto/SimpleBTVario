@@ -56,6 +56,7 @@ Credits:
 (7) http://code.google.com/p/tinkerit/wiki/SecretVoltmeter             //how to measure battery level using AVR ucontroller
 */
 
+#include <EEPROM.h>
 #include <Wire.h>                      //i2c library
 //#include "BMP085.h"                    //bmp085 library, download from url link (1)
 #include <MS5611.h>
@@ -66,19 +67,22 @@ Credits:
 #include <avr/sleep.h>
 #endif
 
+#define xstr(a) str(a)
+#define str(a) #a
+
 /////////////////////////////////////////
 ///////////////////////////////////////// variables that You can test and try
 short speaker_pin = 8;                //arduino speaker output
 short button_pin = 2;                //power off button
 float vario_climb_rate_start = 0.4;    //minimum climb beeping value(ex. start climbing beeping at 0.4m/s)
 float vario_sink_rate_start = -1.1;    //maximum sink beeping value (ex. start sink beep at -1.1m/s)
+#define VARIO_VERSION 1.0
 #define SAMPLES_ARR 6                  //define moving average filter array size (2->30), more means vario is less sensitive and slower
 #define UART_SPEED 9600                //define serial transmision speed (9600,19200, etc...)
 //#define BLINK_LED                      //if we blink led at battery reading
 #define PERIOD_NMEA  333               //period for sending LK8000 sentences
 #define PERIOD_BAT  1000               //period for checking battery level
 #define VBATPIN A7                     //M0 VBat reading pin
-#define LXNAV_SENTENCES                //comment to send LK8000 sentences
 /////////////////////////////////////////
 /////////////////////////////////////////
 //BMP085   bmp085 = BMP085();            //set up bmp085 sensor
@@ -86,8 +90,9 @@ MS5611 ms5611;
 double     Temperature = 0.0f;
 long     Pressure = 101325;
 float    Altitude;
+long     average_pressure;
 int      Battery_Vcc = 0;             //variable to hold the value of Vcc from battery
-const float p0 = 101325;              //Pressure at sea level (Pa)
+const float P0 = 101325;              //Pressure at sea level (Pa)
 //unsigned long get_time1 = millis();
 unsigned long get_time2 = millis() + PERIOD_BAT;
 unsigned long get_time3 = millis() + PERIOD_NMEA;
@@ -104,7 +109,6 @@ float    alt[51];
 float    tim[51];
 float    beep;
 float    Beep_period;
-long average_pressure;
 float tempo;
 float vario;
 float N1;
@@ -113,12 +117,26 @@ float N3;
 float D1;
 float D2;
 static long k[SAMPLES_ARR];
+char serrecv, serbuff[32], *serptr = (serbuff + sizeof(serbuff));
 int buttonState = LOW, lastButtonState = LOW;         // variable for reading the pushbutton status
 unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
 unsigned long debounceDelay = 50;    // the debounce time; increase if the output flickers
 
+enum TYPE_BT_SENTENCES
+{
+  LK8000,
+  LXNAV
+};
+typedef struct
+{
+  char signature[11] = "BTVARIO" xstr(VARIO_VERSION);
+  float p0 = 101325;              //Pressure at sea level (Pa)
+  TYPE_BT_SENTENCES type_sentences = TYPE_BT_SENTENCES::LK8000;
+  
+} SETTINGS;
+SETTINGS settings;
+
 bool debounce(int pin, int *state, int *laststate, byte aimstate = HIGH);
-static long Averaging_Filter(long input);
 static long Averaging_Filter(long input) // moving average filter function
 {
   long sum = 0;
@@ -134,7 +152,7 @@ static long Averaging_Filter(long input) // moving average filter function
   return ( sum / SAMPLES_ARR ) ;
 }
 
-void play_melody(bool intro = true)                 //play only once welcome beep after turning on arduino vario
+void play_melody(bool intro = true)                 //play welcome beep after turning on arduino vario
 {
   if (intro)
   {
@@ -176,7 +194,7 @@ long readVcc()                         // function to read battery value - still
 
 #if !defined(ARDUINO_SAMD_ZERO)
 bool awakening = true;
-void goToSleep()
+void goToSleep()         // sleep µP if pin 2 turn from LOW to HIGH
 {
   byte adcsra, mcucr1, mcucr2;
   play_melody(false);
@@ -200,14 +218,13 @@ void goToSleep()
   play_melody(true);
 }
 
-ISR(INT0_vect)
+ISR(INT0_vect)         // wake up interrupt
 {
   EIMSK = 0;                     //disable interrupts (only need one to wake up)
   awakening = true;
 }
 
-//make all pins input pins with pullup resistors to minimize power consumption
-void makePinsInput(void)
+void makePinsInput(void)     //make all pins input pins with pullup resistors to minimize power consumption
 {
   for (byte i=0; i<20; i++) {
     pinMode(i, INPUT_PULLUP);  
@@ -219,146 +236,72 @@ void makePinsInput(void)
 }
 #endif // !defined(ARDUINO_SAMD_ZERO)
 
-void setup()                // setup() function to setup all necessary parameters before we go to endless loop() function
+double getPressure(double altitude, double sealevelpressure)       // calculate pressure from given altitude and pressure at sea level
 {
-#if !defined(ARDUINO_SAMD_ZERO)
-  makePinsInput();
-  EICRA = 0x00;                  //configure INT0 to trigger on low level
-#endif // !defined(ARDUINO_SAMD_ZERO)
-  Serial.begin(UART_SPEED);       // set up arduino serial port
-  Wire.begin();             // lets init i2c protocol
-  while(!ms5611.begin())
-  {
-    //Serial.println("Could not find a valid MS5611 sensor, check wiring!");
-    for (int i=0; i<10; i++)
-    {
-      digitalWrite(LED_BUILTIN, HIGH);
-      delay(150);
-      digitalWrite(LED_BUILTIN, LOW);
-      delay(150);
-    }
-  }
-  //bmp085.init(MODE_ULTRA_HIGHRES, p0, false);
-  // BMP085 ultra-high-res mode, 101325Pa = 1013.25hPa, false = using Pa units
-  // this initialization is useful for normalizing pressure to specific datum.
-  // OR setting current local hPa information from a weather station/local airport (QNH).
-  play_melody();      //everything is ready, play "welcome" sound
+  return sealevelpressure * pow(1-altitude/44330.0f, 1.0f/0.1902949f);
 }
 
-void loop(void)
+void ParseCommand()        // parse simple NMEA-like commands
 {
-  tempo = millis();
-  vario = 0;
-  N1 = 0;
-  N2 = 0;
-  N3 = 0;
-  D1 = 0;
-  D2 = 0;
-  //bmp085.calcTruePressure(&Pressure);                                   //get one sample from BMP085 in every loop
-  Pressure = ms5611.readPressure();
-  average_pressure = Averaging_Filter(Pressure);                   //put it in filter and take average
-  Altitude = (float)44330 * (1 - pow(((float)Pressure / p0), 0.190295)); //take new altitude in meters
-  //Serial.println(Battery_Vcc);
-  for(int cc = 1; cc <= maxsamples; cc++)                              //samples averaging and vario algorithm
+  serrecv = Serial.read();
+  // reinit serbuff/serptr
+  if (serptr >= (serbuff + sizeof(serbuff)))
   {
-    alt[(cc - 1)] = alt[cc];
-    tim[(cc - 1)] = tim[cc];
-  };
-  alt[maxsamples] = Altitude;
-  tim[maxsamples] = tempo;
-  float stime = tim[maxsamples - samples];
-  for(int cc = (maxsamples - samples); cc < maxsamples; cc++)
-  {
-    N1 += (tim[cc] - stime) * alt[cc];
-    N2 += (tim[cc] - stime);
-    N3 += (alt[cc]);
-    D1 += (tim[cc] - stime) * (tim[cc] - stime);
-    D2 += (tim[cc] - stime);
-  };
-
-  vario = 1000 * ((samples * N1) - N2 * N3) / (samples * D1 - D2 * D2);
-  if ((tempo - beep) > Beep_period)                      // make some beep
-  {
-    beep = tempo;
-    if (vario > vario_climb_rate_start && vario < 15 )
-    {
-      Beep_period = 350 - (vario * 5);
-      tone(speaker_pin, (1000 + (100 * vario)), 300 - (vario * 5)); //when climbing make faster and shorter beeps
-      thermalling = true;                               //ok,we have thermall in our hands
-    }
-    else if ((vario < 0 ) && (thermalling == true))     //looks like we jump out the thermall
-    {
-      //Beep_period=200;
-      // play_siren();                                   //oo, we lost thermall play alarm
-      thermalling = false;
-    }
-    else if (vario < vario_sink_rate_start)             //if you have high performace glider you can change sink beep to -0.95m/s ;)
-    {
-      Beep_period = 200;
-      tone(speaker_pin, 300, 340);
-      thermalling = false;
-    }
+    serptr = &serbuff[sizeof(serbuff)];
+    do
+      *(--serptr) = 0;
+    while (serptr > serbuff);
+    if (serrecv == 0x0D || serrecv == 0x0A)
+      return;
   }
-
-  if (millis() >= get_time2)    //every second get temperature and battery level
+  switch (serrecv)
   {
-    Temperature = ms5611.readTemperature(); // get temperature in celsius from time to time, we have to divide that by 10 to get XY.Z
-    my_temperature = Temperature;
-    Battery_Vcc = min(1100, ((readVcc() - 3600) / 6) + 1000); // get voltage and prepare in percentage (3.6V => 0%, 4.2V => 100%)
-    get_time2 = millis() + PERIOD_BAT;
-#ifdef BLINK_LED
-    // blink the led
-    light_on = !light_on;
-    digitalWrite(LED_BUILTIN, light_on ? HIGH : LOW);
-#endif
-  }
-
-  if (millis() >= get_time3)     //every 1/3 second send NMEA output over serial port
-  {
-    String str_out = 
-#ifdef LXNAV_SENTENCES
-    //creating now NMEA serial output for LXNAV. LXWP0 sentence format:
-    //$LXWP0,logger_stored, airspeed, airaltitude,v1[0],v1[1],v1[2],v1[3],v1[4],v1[5], hdg, windspeed*CS<CR><LF>
-    // 0 loger_stored : [Y|N] (not used in LX1600)
-    // 1 IAS [km/h] ----> Condor uses TAS!
-    // 2 baroaltitude [m]
-    // 3-8 vario values [m/s] (last 6 measurements in last second)
-    // 9 heading of plane (not used in LX1600)
-    // 10 windcourse [deg] (not used in LX1600)
-    // 11 windspeed [km/h] (not used in LX1600)
-    // $LXWP0,Y,222.3,1665.5,1.71,,,,,,239,174,10.1
-    String("LXWP0" + String(",Y,,") + String(dtostrf(Altitude, 0, 0, altitude_arr)) + String(",") + String(dtostrf((vario), 0, 3, vario_arr)) + String(",,,,,,,,"));
-#else
-    //creating now NMEA serial output for LK8000. LK8EX1 protocol format:
-    //$LK8EX1,pressure,altitude,vario,temperature,battery,*checksum
-	  String("LK8EX1" + String(",") + String(average_pressure, DEC) + String(",") + String(dtostrf(Altitude, 0, 0, altitude_arr)) + String(",") +
-               String(dtostrf((vario * 100), 0, 0, vario_arr)) + String(",") + String(my_temperature, DEC) + String(",") + String(Battery_Vcc, DEC) + String(","));
-#endif
-    unsigned int checksum_end, ai, bi;                                               // Calculating checksum for data string
-    for (checksum_end = 0, ai = 0; ai < str_out.length(); ai++)
+    case 0x0D:
+    case 0x0A:
+    if (strncmp(serbuff, "$HELP", 5) == 0)
     {
-      bi = (unsigned char)str_out[ai];
-      checksum_end ^= bi;
+      Serial.println(F("\"$RESET\" : reset all settings"));
+      Serial.println(F("\"$ALTI=450\" : set the current altitude to 450m"));
+      Serial.println(F("\"$BTMODE=LXNAV\" : set the bluetooth sentences to LXNAV mode"));
+      Serial.println(F("                           Supported values :"));
+      Serial.println(F("                             - LXNAV"));
+      Serial.println(F("                             - LK8000"));
     }
-    Serial.print("$");                     //print first sign of NMEA protocol
-    Serial.print(str_out);                 // print data string
-    Serial.print("*");                     //end of protocol string
-    Serial.println(checksum_end, HEX);     //print calculated checksum on the end of the string in HEX
-    get_time3 = millis() + PERIOD_NMEA;
-  }
-
-#if !defined(ARDUINO_SAMD_ZERO)
-  // is button is released, power off the µc
-  if (debounce(button_pin, &buttonState, &lastButtonState, HIGH))
-  {
-    if (awakening)
-      awakening = false;
-    else
-      goToSleep();
+    else if (strncmp(serbuff, "$RESET", 6) == 0)
+    {
+      settings.type_sentences = TYPE_BT_SENTENCES::LK8000;
+      settings.p0 = P0;
+      saveConf();
+    }
+    else if (strncmp(serbuff, "$ALTI=", 6) == 0)
+    {
+      settings.p0 = ms5611.getSeaLevel(ms5611.readPressure(true), (float)atoi(serbuff + 6));
+      saveConf();
+    }
+    else if (strncmp(serbuff, "$BTMODE=", 8) == 0)
+    {
+      if (strncmp(serbuff + 8, "LK8000", 6) == 0)
+      {
+        settings.type_sentences = TYPE_BT_SENTENCES::LK8000;
+        saveConf();
+      }
+      else if (strncmp(serbuff + 8, "LXNAV", 5) == 0)
+      {
+        settings.type_sentences = TYPE_BT_SENTENCES::LXNAV;
+        saveConf();
+      }
+    }
+    serptr = (serbuff + sizeof(serbuff)); // reinit à la prochain iteration
+    break;
+    case '$':
+    serptr = serbuff;
+    default:
+    *(serptr++) = serrecv;
+    break;
   }
 }
 
-bool debounce(int pin, int *state, int *laststate, byte aimstate = HIGH)
+bool debounce(int pin, int *state, int *laststate, byte aimstate = HIGH)      // debounce button input
 {
   bool result = false;
   int reading = digitalRead(pin);
@@ -380,6 +323,164 @@ bool debounce(int pin, int *state, int *laststate, byte aimstate = HIGH)
   }
   *laststate = reading;
   return result;
+}
+
+void saveConf()       // save conf in EEPROM
+{
+  EEPROM.put(0, settings);
+  play_melody(false);
+}
+
+void loadConf()       // read conf from EEPROM
+{
+  for (int i=0; i<sizeof(settings.signature); i++)
+  {
+    if ((char)EEPROM.read(i) != settings.signature[i])
+    {
+      saveConf();   // if invalid signature, clear EEPROM
+      break;
+    }
+  }
+  EEPROM.get(0, settings);
+}
+
+void setup()                // setup() function to setup all necessary parameters before we go to endless loop() function
+{
+#if !defined(ARDUINO_SAMD_ZERO)
+  makePinsInput();
+  EICRA = 0x00;                  //configure INT0 to trigger on low level
+#endif // !defined(ARDUINO_SAMD_ZERO)
+  Serial.begin(UART_SPEED);       // set up arduino serial port
+  Wire.begin();             // lets init i2c protocol
+  while(!ms5611.begin())
+  {
+    //Serial.println("Could not find a valid MS5611 sensor, check wiring!");
+    for (int i=0; i<10; i++)
+    {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(150);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(150);
+    }
+  }
+
+  loadConf();         //load conf from EEPROM
+  play_melody();      //everything is ready, play "welcome" sound
+}
+
+void loop(void)
+{
+  tempo = millis();
+  vario = 0;
+  N1 = 0;
+  N2 = 0;
+  N3 = 0;
+  D1 = 0;
+  D2 = 0;
+
+  Altitude = ms5611.getAltitude(ms5611.readPressure(true), settings.p0); //take new altitude in meters
+  Pressure = getPressure(Altitude, P0); // get back pressure possibly compensated with settings.p0
+  average_pressure = Averaging_Filter(Pressure); // take average (used for LK8000)
+
+  for(int cc = 1; cc <= maxsamples; cc++)                              //samples averaging and vario algorithm
+  {
+    alt[(cc - 1)] = alt[cc];
+    tim[(cc - 1)] = tim[cc];
+  };
+  alt[maxsamples] = Altitude;
+  tim[maxsamples] = tempo;
+  float stime = tim[maxsamples - samples];
+  for(int cc = (maxsamples - samples); cc < maxsamples; cc++)
+  {
+    N1 += (tim[cc] - stime) * alt[cc];
+    N2 += (tim[cc] - stime);
+    N3 += (alt[cc]);
+    D1 += (tim[cc] - stime) * (tim[cc] - stime);
+    D2 += (tim[cc] - stime);
+  };
+
+  vario = 1000 * ((samples * N1) - N2 * N3) / (samples * D1 - D2 * D2);
+  if ((tempo - beep) > Beep_period)                      // make some beep
+  {
+    beep = tempo;
+
+    if ((vario < 0 ) && (thermalling == true))     //looks like we jump out the thermall
+    {
+      //Beep_period=1000;
+      //tone(speaker_pin,50, 500); //oo, we lost thermall play alarm
+      thermalling = false;
+    }
+    else if ((vario > vario_climb_rate_start || vario < vario_sink_rate_start) && vario < 15 )
+    {
+      thermalling = (vario > 0);
+      Beep_period = min(1000, 350 - (vario * 5));
+      tone(speaker_pin, max(100, (1000 + (100 * vario))), min(1000, 300 - (vario * 5))); //when climbing make faster and shorter beeps
+    }
+  }
+
+  if (millis() >= get_time2)    //every second get temperature and battery level
+  {
+    Temperature = ms5611.readTemperature(); // get temperature in celsius from time to time, we have to divide that by 10 to get XY.Z
+    my_temperature = Temperature;
+    Battery_Vcc = min(1100, ((readVcc() - 3600) / 6) + 1000); // get voltage and prepare in percentage (3.6V => 0%, 4.2V => 100%)
+    get_time2 = millis() + PERIOD_BAT;
+#ifdef BLINK_LED
+    // blink the led
+    light_on = !light_on;
+    digitalWrite(LED_BUILTIN, light_on ? HIGH : LOW);
+#endif
+  }
+
+  if (millis() >= get_time3)     //every 1/3 second send NMEA output over serial port
+  {
+    String str_out;
+    if (settings.type_sentences == TYPE_BT_SENTENCES::LXNAV)
+    {
+      //creating now NMEA serial output for LXNAV. LXWP0 sentence format:
+      //$LXWP0,logger_stored, airspeed, airaltitude,v1[0],v1[1],v1[2],v1[3],v1[4],v1[5], hdg, windspeed*CS<CR><LF>
+      // 0 loger_stored : [Y|N] (not used in LX1600)
+      // 1 IAS [km/h] ----> Condor uses TAS!
+      // 2 baroaltitude [m]
+      // 3-8 vario values [m/s] (last 6 measurements in last second)
+      // 9 heading of plane (not used in LX1600)
+      // 10 windcourse [deg] (not used in LX1600)
+      // 11 windspeed [km/h] (not used in LX1600)
+      // $LXWP0,Y,222.3,1665.5,1.71,,,,,,239,174,10.1
+      str_out = String("LXWP0" + String(",Y,,") + String(dtostrf(Altitude, 0, 0, altitude_arr)) + String(",")
+       + String(dtostrf((vario), 0, 3, vario_arr)) + String(",,,,,,,,"));
+    }
+    else
+    {
+      //creating now NMEA serial output for LK8000. LK8EX1 protocol format:
+      //$LK8EX1,pressure,altitude,vario,temperature,battery,*checksum
+      str_out = String("LK8EX1" + String(",") + String(average_pressure, DEC) + String(",") + String(dtostrf(Altitude, 0, 0, altitude_arr)) + String(",") +
+                String(dtostrf((vario * 100), 0, 0, vario_arr)) + String(",") + String(my_temperature, DEC) + String(",") + String(Battery_Vcc, DEC) + String(","));
+    }
+    unsigned int checksum_end, ai, bi;                                               // Calculating checksum for data string
+    for (checksum_end = 0, ai = 0; ai < str_out.length(); ai++)
+    {
+      bi = (unsigned char)str_out[ai];
+      checksum_end ^= bi;
+    }
+    Serial.print("$");                     //print first sign of NMEA protocol
+    Serial.print(str_out);                 // print data string
+    Serial.print("*");                     //end of protocol string
+    Serial.println(checksum_end, HEX);     //print calculated checksum on the end of the string in HEX
+    get_time3 = millis() + PERIOD_NMEA;
+  }
+
+  if (Serial.available())
+    ParseCommand();          //parse commands from user
+
+#if !defined(ARDUINO_SAMD_ZERO)
+  // is button is released, power off the µc
+  if (debounce(button_pin, &buttonState, &lastButtonState, HIGH))
+  {
+    if (awakening)
+      awakening = false;
+    else
+      goToSleep();
+  }
 #endif // !defined(ARDUINO_SAMD_ZERO)
 }
 //The End
