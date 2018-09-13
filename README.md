@@ -10,6 +10,10 @@ Forked from Vario by D.Felix (https://codebender.cc/sketch:34645#Vario.ino)
  + Use of a button to set to sleep/awake the µP
  + Use of the native arduino tone functions (compatibility with ARM Cortex M0)
  + Support LXNAV sentences (now work for XC Soar along with LK8000 for XC Track)
+ + Support simple NMEA-like sentences from user (useable with any Android bluetooth terminal app) :
+   + "$ALTI=400" : set current altitude to 400m (pressure compensation)
+   + "$BTMODE=LXNAV" : set bluetooth sentences to LXNAV or LK8000
+   + "$RESET" : reset the conf to default values
 
 ## Schematic / BOM
  + Arduino Pro Mini 3V
