@@ -1,5 +1,0 @@
-{
-    "board": "arduino:avr:uno",
-    "sketch": "SimpleBTVario\\SimpleBTVario.ino",
-    "port": "COM3"
-}
