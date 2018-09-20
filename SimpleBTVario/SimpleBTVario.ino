@@ -90,9 +90,10 @@ MS5611 ms5611;
 double     Temperature = 0.0f;
 long     Pressure = 101325;
 float    Altitude;
-long     average_pressure;
+unsigned long     average_pressure;
 int      Battery_Vcc = 0;             //variable to hold the value of Vcc from battery
 const float P0 = 101325;              //Pressure at sea level (Pa)
+const float InternalReferenceVoltage = 1.103; // as measured on my 3.3V arduino
 //unsigned long get_time1 = millis();
 unsigned long get_time2 = millis() + PERIOD_BAT;
 unsigned long get_time3 = millis() + PERIOD_NMEA;
@@ -116,7 +117,8 @@ float N2;
 float N3;
 float D1;
 float D2;
-static long k[SAMPLES_ARR];
+static unsigned long k[SAMPLES_ARR];
+static unsigned long battper[SAMPLES_ARR];
 char serrecv, serbuff[32], *serptr = (serbuff + sizeof(serbuff));
 int buttonState = LOW, lastButtonState = LOW;         // variable for reading the pushbutton status
 unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
@@ -137,17 +139,18 @@ typedef struct
 SETTINGS settings;
 
 bool debounce(int pin, int *state, int *laststate, byte aimstate = HIGH);
-static long Averaging_Filter(long input) // moving average filter function
+
+template <typename T> unsigned long Averaging_Filter(unsigned long* values, T input) // moving average filter function
 {
-  long sum = 0;
+  unsigned long sum = 0;
   for (int i = 0; i < SAMPLES_ARR; i++)
   {
-    k[i] = k[i + 1];
+    values[i] = values[i + 1];
   }
-  k[SAMPLES_ARR - 1] = input;
+  values[SAMPLES_ARR - 1] = input;
   for (int i = 0; i < SAMPLES_ARR; i++)
   {
-    sum += k[i];
+    sum += values[i];
   }
   return ( sum / SAMPLES_ARR ) ;
 }
@@ -169,26 +172,25 @@ void play_melody(bool intro = true)                 //play welcome beep after tu
   }
 }
 
-long readVcc()                         // function to read battery value - still in developing phase
+float readVcc()                         // function to read battery value
 {
 #if defined(ARDUINO_SAMD_ZERO)
   float measuredvbat = analogRead(VBATPIN);
   measuredvbat *= 2;    // we divided by 2, so multiply back
-  measuredvbat *= 3.3;  // Multiply by 3.3V, our reference voltage
-  measuredvbat /= 1.024f; // convert to mV
-  //Serial.print("VBat: " ); Serial.print(measuredvbat); Serial.println(" mV");
+  measuredvbat *= 3.3f;  // Multiply by 3.3V, our reference voltage
+  measuredvbat /= 1024; // convert to V
+  //Serial.print("VBat: " ); Serial.print(measuredvbat); Serial.println(" V");
 #else
-  long result;
-  // Read 1.1V reference against AVcc
-  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-  delay(2); // Wait for Vref to settle
-  ADCSRA |= _BV(ADSC); // Convert
+  ADCSRA =  bit (ADEN);   // turn ADC on
+  ADCSRA |= bit (ADPS0) |  bit (ADPS1) | bit (ADPS2);  // Prescaler of 128
+  ADMUX = bit (REFS0) | bit (MUX3) | bit (MUX2) | bit (MUX1);
+  
+  delay (10);  // let it stabilize
+  
+  bitSet (ADCSRA, ADSC);  // start a conversion  
   while (bit_is_set(ADCSRA, ADSC));
-  result = ADCL;
-  result |= ADCH << 8;
-  result = 1126400L / result; // Back-calculate AVcc in mV
-  //Serial.print("VBat: " ); Serial.print(result); Serial.println(" mV");
-  return result;
+  
+  return InternalReferenceVoltage / float (ADC + 0.5f) * 1024.0f; 
 #endif
 }
 
@@ -380,7 +382,7 @@ void loop(void)
 
   Altitude = ms5611.getAltitude(ms5611.readPressure(true), settings.p0); //take new altitude in meters
   Pressure = getPressure(Altitude, P0); // get back pressure possibly compensated with settings.p0
-  average_pressure = Averaging_Filter(Pressure); // take average (used for LK8000)
+  average_pressure = Averaging_Filter(k, (unsigned long)Pressure); // take average (used for LK8000)
 
   for(int cc = 1; cc <= maxsamples; cc++)                              //samples averaging and vario algorithm
   {
@@ -422,7 +424,7 @@ void loop(void)
   {
     Temperature = ms5611.readTemperature(); // get temperature in celsius from time to time, we have to divide that by 10 to get XY.Z
     my_temperature = Temperature;
-    Battery_Vcc = min(1100, ((readVcc() - 3600) / 6) + 1000); // get voltage and prepare in percentage (3.6V => 0%, 4.2V => 100%)
+    Battery_Vcc = min(1100, 1000 + max(0, Averaging_Filter(battper, (readVcc() - 3.6f) / 0.006f))); // get voltage and prepare in percentage (3.6V => 0%, 4.2V => 100%)
     get_time2 = millis() + PERIOD_BAT;
 #ifdef BLINK_LED
     // blink the led
