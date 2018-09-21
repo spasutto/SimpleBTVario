@@ -3,7 +3,7 @@ Simple Bluetooth Vario (Arduino + MS5611 barometric pressure sensor) with LK8000
 
 Forked from Vario by D.Felix (https://codebender.cc/sketch:34645#Vario.ino)
 
-<a href="https://drive.google.com/uc?export=view&id=1Vi6WSBSU8t0mJlr0S6Y0-SK6L4gqkTsE"><img src="https://drive.google.com/uc?export=view&id=1Vi6WSBSU8t0mJlr0S6Y0-SK6L4gqkTsE" width="200" /></a>
+<a href="https://photos.app.goo.gl/WgB2ibHbgNbcgTQDA"><img src="https://drive.google.com/uc?export=view&id=1Vi6WSBSU8t0mJlr0S6Y0-SK6L4gqkTsE" width="200" /></a>
 
 ## Differences from original:
  + Use of MS5611 sensor instead of BMP085
