@@ -29,6 +29,8 @@ Forked from Vario by D.Felix (https://codebender.cc/sketch:34645#Vario.ino)
 
 ## Programming/assembly instructions ##
 
+*Prerequisite* : you must download and install MS5611 library here : https://github.com/jarzebski/Arduino-MS5611
+
 First, use a 3.3V Arduino Pro Mini, because the 3.7V battery is connected directly to the VCC and the atmega328p is not designed to run @16MHz with Vcc around 3.3V. The battery (or battery charger output) must be connected to VCC and not RAW or the battery level will be wrong.
 
 To measure properly the battery voltage, you must determine the real voltage of the 1.1V internal reference voltage (ref [Nick Gammon site](https://www.gammon.com.au/adc)). So first upload this simple code to the arduino :
