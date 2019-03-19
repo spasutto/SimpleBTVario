@@ -47,7 +47,7 @@ Example 0% = 1000. 14% = 1014 . Do not send float values for percentages.
 Percentage should be 0 to 100, with no decimals, added by 1000!
 
 Credits:
-(1) http://code.google.com/p/bmp085driver/                             //bmp085 library
+(1) https://github.com/jarzebski/Arduino-MS5611                        //MS5611 library
 (2) http://mbed.org/users/tkreyche/notebook/bmp085-pressure-sensor/    //more about bmp085 and average filter
 (3) http://code.google.com/p/rogue-code/                               //helpfull tone library to make nice beeping without using delay
 (4) http://www.daqq.eu/index.php?show=prj_sanity_nullifier             //how to make loud piezo speaker
@@ -58,8 +58,7 @@ Credits:
 
 #include <EEPROM.h>
 #include <Wire.h>                      //i2c library
-//#include "BMP085.h"                    //bmp085 library, download from url link (1)
-#include <MS5611.h>
+#include <MS5611.h>                    //MS5611 library, download from url link (1)
 #if defined(ARDUINO_SAMD_ZERO)
 #include <avr/dtostrf.h>                //we need that to use dtostrf() and convert float to string
 #else
