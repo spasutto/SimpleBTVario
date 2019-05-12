@@ -73,8 +73,6 @@ Credits:
 ///////////////////////////////////////// variables that You can test and try
 short speaker_pin = 8;                //arduino speaker output
 short button_pin = 2;                //power off button
-float vario_climb_rate_start = 0.4;    //minimum climb beeping value(ex. start climbing beeping at 0.4m/s)
-float vario_sink_rate_start = -1.1;    //maximum sink beeping value (ex. start sink beep at -1.1m/s)
 #define VARIO_VERSION 1.0
 #define SAMPLES_ARR 6                  //define moving average filter array size (2->30), more means vario is less sensitive and slower
 #define UART_SPEED 9600                //define serial transmision speed (9600,19200, etc...)
@@ -133,7 +131,8 @@ typedef struct
   char signature[11] = "BTVARIO" xstr(VARIO_VERSION);
   float p0 = 101325;              //Pressure at sea level (Pa)
   TYPE_BT_SENTENCES type_sentences = TYPE_BT_SENTENCES::LK8000;
-  
+  float vario_climb_rate_start = 0.4;    //minimum climb beeping value(ex. start climbing beeping at 0.4m/s)
+  float vario_sink_rate_start = -200.0;    //maximum sink beeping value (ex. start sink beep at -1.1m/s)
 } SETTINGS;
 SETTINGS settings;
 
@@ -267,6 +266,8 @@ void ParseCommand()        // parse simple NMEA-like commands
       Serial.println(F("                           Supported values :"));
       Serial.println(F("                             - LXNAV"));
       Serial.println(F("                             - LK8000"));
+      Serial.println(F("\"$VTMIN=-1.1\" : set the vario sink treshold"));
+      Serial.println(F("\"$VTMAX=0.4\" : set the vario climb treshold"));
     }
     else if (strncmp(serbuff, "$RESET", 6) == 0)
     {
@@ -277,6 +278,16 @@ void ParseCommand()        // parse simple NMEA-like commands
     else if (strncmp(serbuff, "$ALTI=", 6) == 0)
     {
       settings.p0 = ms5611.getSeaLevel(ms5611.readPressure(true), (float)atoi(serbuff + 6));
+      saveConf();
+    }
+    else if (strncmp(serbuff, "$VTMIN=", 7) == 0)
+    {
+      settings.vario_sink_rate_start = (float)atof(serbuff + 7);
+      saveConf();
+    }
+    else if (strncmp(serbuff, "$VTMAX=", 7) == 0)
+    {
+      settings.vario_climb_rate_start = (float)atof(serbuff + 7);
       saveConf();
     }
     else if (strncmp(serbuff, "$BTMODE=", 8) == 0)
@@ -405,17 +416,23 @@ void loop(void)
   {
     beep = tempo;
 
-    if ((vario < 0 ) && (thermalling == true))     //looks like we jump out the thermall
+    if (vario > settings.vario_climb_rate_start && vario < 15 )
+    {
+      thermalling = true;
+      Beep_period = min(1000, 350 - (vario * 5));
+      tone(speaker_pin, max(100, (1000 + (100 * vario))), min(1000, 300 - (vario * 5))); //when climbing make faster and shorter beeps
+    }
+    else if ((vario < 0 ) && (thermalling == true))     //looks like we jump out the thermall
     {
       //Beep_period=1000;
       //tone(speaker_pin,50, 500); //oo, we lost thermall play alarm
       thermalling = false;
     }
-    else if ((vario > vario_climb_rate_start || vario < vario_sink_rate_start) && vario < 15 )
+    else if (vario < settings.vario_sink_rate_start)
     {
-      thermalling = (vario > 0);
-      Beep_period = min(1000, 350 - (vario * 5));
-      tone(speaker_pin, max(100, (1000 + (100 * vario))), min(1000, 300 - (vario * 5))); //when climbing make faster and shorter beeps
+      Beep_period=200;
+      tone(speaker_pin, 300, 340);
+      thermalling = false;
     }
   }
 
