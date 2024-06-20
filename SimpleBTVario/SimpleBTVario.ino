@@ -416,24 +416,25 @@ void loop(void)
   {
     beep = tempo;
 
-    if (vario > settings.vario_climb_rate_start && vario < 15 )
-    {
-      thermalling = true;
-      Beep_period = min(1000, 350 - (vario * 5));
-      tone(speaker_pin, max(100, (1000 + (100 * vario))), min(1000, 300 - (vario * 5))); //when climbing make faster and shorter beeps
-    }
-    else if ((vario < 0 ) && (thermalling == true))     //looks like we jump out the thermall
+    if ((vario < 0 ) && (thermalling == true))     //looks like we jump out the thermall
     {
       //Beep_period=1000;
       //tone(speaker_pin,50, 500); //oo, we lost thermall play alarm
       thermalling = false;
     }
-    else if (vario < settings.vario_sink_rate_start)
+    else if ((vario > settings.vario_climb_rate_start || vario < settings.vario_sink_rate_start) && vario < 15 )
     {
-      Beep_period=200;
-      tone(speaker_pin, 300, 340);
-      thermalling = false;
+      thermalling = true;
+      Beep_period = min(1000, 350 - (vario * 5));
+      tone(speaker_pin, max(100, (1000 + (100 * vario))), min(1000, 300 - (vario * 5))); //when climbing make faster and shorter beeps
     }
+    // stationnary sinking sound
+    /*else if (vario < settings.vario_sink_rate_start && vario > -10)
+    {
+      thermalling = false;
+      Beep_period = 200;
+      tone(speaker_pin, 300, 340);
+    }*/
   }
 
   if (millis() >= get_time2)    //every second get temperature and battery level
