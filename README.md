@@ -18,7 +18,7 @@ Forked from Vario by D.Felix (https://codebender.cc/sketch:34645#Vario.ino)
 ## Schematic / BOM
  + Arduino Pro Mini **3.3V**
  + MS5611
- + HC-06/05 (not needed if used as a simple audio vario)
+ + HC-06/05 (not needed if used as a simple audio vario or if using a USB-capable arduino, then you can plug directly in the smartphone and drop also the LIPO/charger)
  + switch, either ;
    + spdt if connected between battery charger and arduino
    + push button if connected to D2 (set µP in sleep mode)
